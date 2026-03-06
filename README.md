@@ -1,4 +1,4 @@
-# ena-dodic-dev
+# 🥑 ena-dodic-dev
 
 Personal portfolio and technical writing site for [Ena Dodić](https://enadodic.dev) — Senior Frontend Engineer, Next.js specialist, and aspiring conference speaker.
 
