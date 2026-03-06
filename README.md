@@ -121,8 +121,8 @@ Uses Resend. Set `RESEND_API_KEY` and `RESEND_AUDIENCE_ID` in `.env.local`. Copy
 ## Running locally
 
 ```bash
-git clone https://github.com/enadodic/enadodic.dev
-cd enadodic.dev
+git clone https://github.com/enicaaaa/ena-dodic-dev
+cd ena-dodic-dev
 npm install
 cp .env.example .env.local
 # fill in RESEND_API_KEY and RESEND_AUDIENCE_ID
