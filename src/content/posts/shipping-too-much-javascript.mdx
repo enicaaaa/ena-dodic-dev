@@ -1,0 +1,102 @@
+---
+title: "You're Shipping 10× More JavaScript Than You Think"
+date: "2026-01-15"
+description: "A practical audit of a real Next.js app. The four patterns that silently bloat your bundles, and how to fix each one."
+tags: ["performance", "bundle", "next.js"]
+published: true
+---
+
+I recently audited a Next.js app that had a 1.2MB first-load JS bundle. The developers were confused — they'd been careful, or so they thought. No massive libraries, nothing obviously wrong.
+
+We found four patterns that together accounted for 800KB of completely avoidable JavaScript. Here's each one and how to fix it.
+
+## 1. Barrel file imports
+
+The project had an `index.ts` in every feature folder that re-exported everything:
+
+```ts
+// features/dashboard/index.ts
+export * from './Chart'
+export * from './Table'
+export * from './Filters'
+export * from './DatePicker'
+export * from './ExportButton'
+```
+
+Then pages imported from the barrel:
+
+```ts
+import { Chart } from '@/features/dashboard'
+```
+
+Even though only `Chart` was used, the bundler pulled in the entire barrel — including `DatePicker` which imported `react-day-picker` (47KB gzipped).
+
+**Fix**: Import directly from the source file.
+
+```ts
+import { Chart } from '@/features/dashboard/Chart'
+```
+
+Or configure `optimizePackageImports` in `next.config.ts`:
+
+```ts
+experimental: {
+  optimizePackageImports: ['@/features/dashboard'],
+}
+```
+
+## 2. Heavy libraries on the client that belong on the server
+
+A markdown renderer (`marked`, 32KB) was being imported in a Client Component to render article previews. The rendering happened on every page load, in the browser.
+
+Since Next.js has Server Components, this work belongs on the server:
+
+```tsx
+// Before — runs in browser
+'use client'
+import { marked } from 'marked'
+export function Preview({ markdown }: { markdown: string }) {
+  return <div dangerouslySetInnerHTML={{ __html: marked(markdown) }} />
+}
+
+// After — runs on server, zero JS sent to browser
+import { marked } from 'marked'
+export function Preview({ markdown }: { markdown: string }) {
+  return <div dangerouslySetInnerHTML={{ __html: marked(markdown) }} />
+}
+```
+
+No `'use client'` = Server Component = the import never reaches the browser bundle.
+
+## 3. Unoptimised third-party scripts
+
+Two analytics scripts and a chat widget were loaded via `<script>` tags in the layout, synchronously, blocking the main thread.
+
+**Fix**: Use `next/script` with `strategy="lazyOnload"` for anything that isn't critical to the initial render.
+
+```tsx
+import Script from 'next/script'
+
+// In layout.tsx
+<Script src="https://analytics.example.com/script.js" strategy="lazyOnload" />
+```
+
+The chat widget was moved to a lazy-loaded Client Component that only mounts after a 3-second delay — invisible to users who leave quickly, invisible to the initial bundle.
+
+## 4. Icons
+
+The project used `react-icons` and imported from the top-level package:
+
+```ts
+import { FiChevronRight, FiUser, FiSettings } from 'react-icons/fi'
+```
+
+Tree-shaking works here, but `react-icons` bundles each icon as a React component with runtime overhead. The project was using ~40 icons.
+
+**Fix**: Switch to `lucide-react` (better tree-shaking, smaller individual icons) or inline the SVGs you need as components.
+
+---
+
+After these four fixes: 1.2MB → 310KB. Lighthouse performance score: 47 → 94.
+
+The lesson: bundle bloat almost never comes from one big decision. It comes from four small ones that compound.

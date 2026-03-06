@@ -1,0 +1,79 @@
+---
+title: "Caching in Next.js App Router: The Mental Model"
+date: "2026-02-28"
+description: "Four layers of caching and how to actually reason about them. The mental model the docs never quite spell out."
+tags: ["next.js", "caching", "app-router"]
+published: true
+---
+
+The App Router has four separate caching mechanisms. Most developers encounter them one at a time, in frustration, when something doesn't update the way they expect. This article gives you all four at once — and a mental model that makes them easier to reason about.
+
+## The four caches
+
+**Request Memoization** lives at the top of the tree. Within a single server render, identical `fetch()` calls with the same URL and options are deduplicated automatically. You can call `fetch('/api/user')` in five different Server Components and only one HTTP request goes out. This cache is reset between requests.
+
+**Data Cache** is the persistent one. `fetch()` responses are stored on disk (or in a CDN) and reused across requests and deployments — unless you opt out with `{ cache: 'no-store' }` or revalidate with `{ next: { revalidate: 60 } }`. This is where most caching confusion lives.
+
+**Full Route Cache** caches the rendered HTML and React Server Component payload for static routes at build time. If your route has no dynamic data, Next.js renders it once and serves it forever (until the next deployment or explicit revalidation).
+
+**Router Cache** lives in the browser. When you navigate between pages, the rendered output is stored in memory so back-navigation feels instant. This is a client-side cache and it's separate from all the server-side ones.
+
+## The mental model
+
+Think of them as layers:
+
+```
+Browser
+  └── Router Cache (client-side, per-session)
+        └── Full Route Cache (server, per-deployment/revalidation)
+              └── Data Cache (server, persisted, per-revalidation tag)
+                    └── Request Memoization (server, per-request)
+```
+
+When you call `revalidateTag('user')`, you're invalidating the **Data Cache**. The Full Route Cache for routes that consumed that tag is also invalidated. But the **Router Cache** in the browser isn't touched — which is why a user with a cached page open might not see the update until they navigate away and back.
+
+## The bug that bit me
+
+We had a Server Action that updated a user's profile and called `revalidateTag('user-profile')`. Data Cache: invalidated. Full Route Cache: invalidated. But users with the profile page already open saw no change.
+
+The fix: call `router.refresh()` in the client after the Server Action completes. That flushes the Router Cache entry for the current route.
+
+```ts
+// app/profile/actions.ts
+'use server'
+
+import { revalidateTag } from 'next/cache'
+
+export async function updateProfile(data: FormData) {
+  await db.user.update({ /* ... */ })
+  revalidateTag('user-profile')
+}
+```
+
+```tsx
+// app/profile/ProfileForm.tsx
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { updateProfile } from './actions'
+
+export function ProfileForm() {
+  const router = useRouter()
+
+  async function handleSubmit(formData: FormData) {
+    await updateProfile(formData)
+    router.refresh() // ← this is the critical line
+  }
+
+  // ...
+}
+```
+
+## Summary
+
+- **Request Memoization**: deduplicates fetches within a single render. Automatic.
+- **Data Cache**: persists `fetch()` results across requests. Opt-out with `no-store`, revalidate with tags.
+- **Full Route Cache**: caches rendered routes. Invalidated when the Data Cache entries it depends on are invalidated.
+- **Router Cache**: client-side, per-session. Flushed by `router.refresh()` or navigation.
+
+When something isn't updating, work from the bottom up: is the data stale? Is the route cached? Is the browser still holding the old page?
